@@ -2,6 +2,150 @@
 #
 
 
+#### Classic DEL-EL formulation ####
+
+negLDELfn <- function(par, x, n_total, n_samples, m, basis_func, d) {
+  # Calculate negative log dual empirical likelihood for a
+  # given value of parameter.
+  # par: A vector of parameter vectors theta_r for each population r (2 to m+1)
+  # x: A vector of all samples from all populations (numeric vector)
+  # basis_func: A function to compute Q(x) given an observation x
+  # n_samples: A vector of sample sizes for each population
+  # n_total: Total sample size (sum of all n_samples)
+  # m+1: number samples
+  # d+1: dimension of basis function
+  
+  
+  if (length(x) != n_total) {
+    stop("Length of data vector 'x' is not consistent with sample sizes 'n_samples'!")
+  }  # check data lengths
+  
+  if (sum(n_samples) != n_total) {
+    stop("total sample size is not consistent with 'n_samples'!")
+  }  # check n_samples lengths
+  
+  if (length(par) != m*(d+1)) {
+    stop("parameters length is not m*(d+1)!")
+  }  # check parameter length
+  
+  
+  rho <- n_samples / n_total    # Calculate rho values for each population
+  theta <- c(rep(0,d+1),par)    # add theta_0 to parameters
+  Qx <- t(sapply(x, basis_func)) # Use t() to transpose, so each row represents Q(x_kj)
+  
+  
+  if (dim(Qx)[2] != m) { 
+    stop("dimension of Q(x_kj) should be n*m!")
+  }   # check Q(x_kj)
+  
+  
+  # Split x into a list of samples based on n_samples
+  x_list <- split(x = x, f = rep(1:(m+1), n_samples))
+  # Split parameter into a list of parameters based on n_samples
+  theta_list <- split(x = theta, f = rep(1:(m+1), rep(d+1,m+1)))
+  
+  # h(theta,x_kj): A list of length m+1, each element is a length n_total vector with each row to be rho_r*exp(theta_r^T*Q(x_kj))
+  h_r_kj <- lapply(1:(m+1), function(r) {
+    rho[r] * exp(Qx %*% theta_list[[r]])
+  })
+  
+  # s(theta,x_kj): A vector of length n_total with each row to be s(theta,x_kj)
+  s_kj <- Reduce("+",h_r_kj)
+  
+  # linear term: A list of length m+1, each element is a length n_total vector with each row to be theta_r^T*Q(x_kj)
+  tail_term <- lapply(1:(m+1), function(k) {
+    t(sapply(x_list[[k]], basis_func)) %*% (theta_list[[k]])
+  })
+  
+  
+  # summation over all k,j
+  # returns the negative value of DEL evaluate at a specific theta
+  return(sum(log(s_kj)-do.call(rbind,tail_term)))
+  
+}
+
+
+negLDELgr <- function(par, x, n_total, n_samples, m, basis_func, d) {
+  # Calculate gradient of negative log dual empirical likelihood for a
+  # given value of parameter.
+  # par: A vector of parameter vectors theta_r for each population r (2 to m+1)
+  # x: A vector of all samples from all populations (numeric vector)
+  # basis_func: A function to compute Q(x) given an observation x
+  # n_samples: A vector of sample sizes for each population
+  # n_total: Total sample size (sum of all n_samples)
+  # m+1: number samples
+  # d+1: dimension of basis function
+  
+  
+  if (length(x) != n_total) {
+    stop("Length of data vector 'x' is not consistent with sample sizes 'n_samples'!")
+  }  # check data lengths
+  
+  if (sum(n_samples) != n_total) {
+    stop("total sample size is not consistent with 'n_samples'!")
+  }  # check n_samples lengths
+  
+  if (length(par) != m*(d+1)) {
+    stop("parameters length is not m*(d+1)!")
+  }  # check parameter length
+  
+  
+  rho <- n_samples / n_total    # Calculate rho values for each population
+  theta <- c(rep(0,d+1),par)    # add theta_0 to parameters
+  Qx <- t(sapply(x, basis_func)) # Use t() to transpose, so each row represents Q(x_kj)
+  
+  
+  if (dim(Qx)[2] != m) { 
+    stop("dimension of Q(x_kj) should be n*m!")
+  }   # check Q(x_kj)
+  
+  # Split x into a list of samples based on n_samples
+  x_list <- split(x = x, f = rep(1:(m+1), n_samples))
+  
+  # Split parameter into a list of parameters based on n_samples
+  theta_list <- split(x = theta, f = rep(1:(m+1), rep(d+1,m+1)))
+  
+  # Split Q(x_kj) into a list based on n_samples
+  Qx_list <- lapply(1:(m+1), function(k) {
+    t(sapply(x_list[[k]], basis_func))
+  })
+  
+  
+  # h(theta,x_kj): A list of length m+1, each element is a length n_total vector with each row to be rho_r*exp(theta_r^T*Q(x_kj))
+  h_r_kj <- lapply(1:(m+1), function(r) {
+    rho[r] * exp(Qx %*% theta_list[[r]])
+  })
+  
+  # s(theta,x_kj): A vector of length n_total with each row to be s(theta,x_kj)
+  s_kj <- Reduce("+",h_r_kj)
+  
+  # Find start and end indices for each samples
+  start_indices <- cumsum(c(1, n_samples[-length(n_samples)])) # Start indices for each segment
+  end_indices <- cumsum(n_samples) # End indices for each segment
+  
+  # e_k as a list of length m+1
+  e_k <- lapply(seq_along(n_samples), function(k) {
+    .vec <- rep(0, sum(n_samples))  # Initialize a vector of zeros of the required length
+    .vec[start_indices[k]:end_indices[k]] <- 1  # Set elements from start to end index to 1
+    return(.vec)
+  })
+  
+  # parLk_alpha: A list of length m+1, each element is the partial derivative of L_k(theta,x_kj) w.r.t. alpha
+  parLk_alpha <- mapply(function(mat1,mat2,e_k){as.vector(mat1/mat2)-e_k}, mat1 = h_r_kj, e_k = e_k, MoreArgs = list(mat2 = s_kj), SIMPLIFY = FALSE)
+  
+  # parLk_theta: A list of length m+1, each element is the partial derivative of L_k(theta,x_kj) w.r.t. theta
+  parLk_theta <-  mapply(function(mat1,mat2){mat1*mat2}, mat1 = parLk_alpha, MoreArgs = list(mat2 = Qx), SIMPLIFY = FALSE)
+  
+  
+  # summation over all k,j
+  # returns a m*(d+1)-vector of negative value of the partial derivatives of DEL evaluate at a specific theta 
+  return(c(t(do.call(rbind, lapply(parLk_theta, colSums))[-1,])))
+  
+}
+
+
+
+
 #### DEL-EL with missing value Idea 4 ####
 
 negLDELfn_miss4 <- function(par, x, x_imp, delta, px_hat, n_total, n_samples, m, basis_func, d) {
