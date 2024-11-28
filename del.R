@@ -350,9 +350,111 @@ negLDELgr_miss4 <- function(par, x, x_imp, delta, px_hat, n_total, n_samples, m,
 
 
 
-mu_hat_miss4 <- function(mele, x, x_imp, delta, px_hat, n_total, n_samples, m, basis_func, d) {
+#### Estimate p_kj and d F_r(y_kj) for r ####
+
+p_hat_miss4 <- function(mele, x, x_imp, delta, n_total, n_samples, m, basis_func, d) {
+## d F_r(\tilde{Y}_{kj}) = \delta_{kj}Y_{kj} + (1-\delta_{kj})\tilde{Y}_{kj}
+  
   # Calculate mean estimator based on DRM.
-  # mele: A vector of meleameter vectors theta_r for each population r (2 to m+1)
+  # mele: A vector of mele of theta_r for each population r (2 to m+1)
+  # x: A vector of all samples from all populations (numeric vector)
+  # x_imp: A vector of all imputed values from all populations (numeric vector)
+  # delta: A vector of all response indicator from all populations (0,1)
+  # basis_func: A function to compute Q(x) given an observation x
+  # n_samples: A vector of sample sizes for each population
+  # n_total: Total sample size (sum of all n_samples)
+  # m+1: number samples
+  # d+1: dimension of basis function
+  
+  
+  if (length(x) != n_total) {
+    stop("Length of data vector 'x' is not consistent with sample sizes 'n_samples'!")
+  }  # check data lengths
+  
+  if (length(x_imp) != n_total) {
+    stop("Length of imputed data vector 'x_imp' is not consistent with sample sizes 'n_samples'!")
+  }  # check data lengths
+  
+  if (length(delta) != n_total) {
+    stop("Length of response indicator data vector 'delta' is not consistent with sample sizes 'n_samples'!")
+  }  # check data lengths
+  
+  if (any(is.na(x[delta==1]))) {
+    stop("There are 'NA's in the response!")
+  }  # check data lengths
+  
+  if (length(px_hat) != n_total) {
+    stop("Length of estimated response probability data vector 'px_hat' is not consistent with sample sizes 'n_samples'!")
+  }  # check data lengths
+  
+  if (sum(n_samples) != n_total) {
+    stop("total sample size is not consistent with 'n_samples'!")
+  }  # check n_samples lengths
+  
+  if (length(par) != m*(d+1)) {
+    stop("parameters length is not m*(d+1)!")
+  }  # check parameter length
+  
+  
+  rho <- n_samples / n_total    # Calculate rho values for each population
+  theta <- c(rep(0,d+1),par)    # add theta_0 to parameters
+  Qx <- t(sapply(x, basis_func)) # Use t() to transpose, so each row represents Q(x_kj)
+  Qx_imp <- t(sapply(x_imp, basis_func)) # Use t() to transpose, so each row represents Q(x_kj)
+  
+  
+  if (dim(Qx)[2] != m) { 
+    stop("dimension of Q(x_kj) should be n*m!")
+  }   # check Q(x_kj)
+  
+  
+  # Split x and x_imp into a list of samples based on n_samples
+  x_list <- split(x = x, f = rep(1:(m+1), n_samples))
+  x_imp_list <- split(x = x_imp, f = rep(1:(m+1), n_samples))
+  
+  # Split parameter into a list of parameters based on n_samples
+  theta_list <- split(x = theta, f = rep(1:(m+1), rep(d+1,m+1)))
+  
+  # omega_r(theta,x_kj): A list of length m+1, each element is a length n_total vector with each row to be rho_r*exp(theta_r^T*Q(x_kj))
+  omega_r_kj <- lapply(1:(m+1), function(r) {
+    exp(Qx %*% theta_list[[r]])
+  })
+  omega_r_kj_imp <- lapply(1:(m+1), function(r) {
+    exp(Qx_imp %*% theta_list[[r]])
+  })
+  
+  h_r_kj <- mapply("*",omega_r_kj, rho, SIMPLIFY = FALSE)
+  h_r_kj_imp <- mapply("*",omega_r_kj_imp, rho, SIMPLIFY = FALSE)
+  
+  # s(theta,x_kj): A vector of length n_total with each row to be s(theta,x_kj)
+  s_kj <- Reduce("+",h_r_kj)*n_total
+  s_kj_imp <- Reduce("+",h_r_kj_imp)*n_total
+  
+  
+  # eta_kj: A list of length m+1, each element is the partial derivative of L_k(theta,x_kj) w.r.t. alpha
+  eta_kj <- mapply(function(mat1,mat2){as.vector(mat1/mat2)}, mat1 = omega_r_kj, MoreArgs = list(mat2 = s_kj), SIMPLIFY = FALSE)
+  eta_kj_imp <- mapply(function(mat1,mat2){as.vector(mat1/mat2)}, mat1 = omega_r_kj_imp, MoreArgs = list(mat2 = s_kj_imp), SIMPLIFY = FALSE)
+  
+  # partial tilde L_kj/partial theta
+  eta_tilde_kj <- lapply(1:(m+1), function(r) {
+    .vec <- eta_kj[[r]]
+    .vec[delta==0] <- eta_kj_imp[[r]][delta==0]
+    return(.vec)
+  })
+  
+  
+  # summation over all k,j
+  return(c(do.call(rbind, lapply(eta_kj, sum))))  
+  
+}
+
+
+
+#### Estimate Population Parameters ####
+
+
+mu_hat_miss4 <- function(mele, x, x_imp, delta, px_hat, n_total, n_samples, m, basis_func, d) {
+  # Calculate d F_r(y_kj) estimator based on DRM.
+  # mele: A vector of mele of theta_r for each population r (2 to m+1)
   # x: A vector of all samples from all populations (numeric vector)
   # x_imp: A vector of all imputed values from all populations (numeric vector)
   # delta: A vector of all response indicator from all populations (0,1)
@@ -443,5 +545,3 @@ mu_hat_miss4 <- function(mele, x, x_imp, delta, px_hat, n_total, n_samples, m, b
   return(c(do.call(rbind, lapply(eta_kj, sum))))  
   
 }
-
-
